@@ -43,6 +43,7 @@ def run_gui(port: int = 0, prefer_browser: bool = False) -> None:
     server = make_server(ctx, port)
     threading.Thread(target=server.serve_forever, name="downverse-http", daemon=True).start()
     url = f"http://127.0.0.1:{ctx.port}/?t={ctx.token}"
+    ctx.updates.check_in_background(lambda: ctx.settings.get()["check_updates"])
 
     window = None
     if not prefer_browser:

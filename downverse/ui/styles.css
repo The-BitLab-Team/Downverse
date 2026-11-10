@@ -271,3 +271,4 @@ h1,h2,h3,h4,p{margin:0}
 .job-meta{display:flex;gap:4px 12px;flex-wrap:wrap}
 .hidden{display:none!important}
 .banner .detail{margin-top:4px;font-size:12px;opacity:.75;word-break:break-word}
+.banner.update{align-items:center;flex-wrap:wrap}.banner .grow{flex:1;min-width:180px}

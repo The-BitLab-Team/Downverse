@@ -14,6 +14,7 @@ import re
 import secrets
 import subprocess
 import sys
+import webbrowser
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,6 +29,7 @@ from .links import KIND_CHANNEL, LinkError, parse_link
 from .manager import AnalysisManager, DownloadManager
 from .paths import default_videos_dir
 from .settings import DEFAULTS, SettingsStore, normalize
+from .updates import UpdateChecker
 
 UI_DIR = Path(__file__).parent / "ui"
 MAX_BODY = 1_000_000
@@ -58,6 +60,8 @@ class AppContext:
         self.downloads = DownloadManager(self.settings, self.library, self.engine)
         self.analyses = AnalysisManager(self.settings, self.library, self.engine)
         self.engine.is_busy = lambda: self.downloads._running > 0
+        self.updates = UpdateChecker()     # só consulta a rede quando alguém manda (app.py ou o botão)
+        self.open_url = webbrowser.open    # trocável nos testes
         self.token = token or secrets.token_urlsafe(24)
         self.port = 0
         self.pick_file = None              # idem, para escolher o cookies.txt
@@ -94,6 +98,7 @@ class AppContext:
             "ffmpeg": bool(self.engine.ffmpeg),
             "can_pick_folder": self.can_pick_folder,
             "can_pick_file": self.pick_file is not None,
+            "update": self.updates.status(self.settings.get()["skipped_version"]),
             "queue": self.downloads.snapshot(),
             "library": {
                 "count": len(items),
@@ -330,6 +335,17 @@ def make_handler(ctx: AppContext):
             if chosen:
                 ctx.settings.update({"output_dir": str(chosen)})
             return {"settings": ctx.settings.public(), "output_dir": str(ctx.settings.weverse_root())}
+
+        @route("POST", "/api/update/check")
+        def update_check(self, m, body, q):
+            ctx.updates.check()
+            return {"update": ctx.updates.status(ctx.settings.get()["skipped_version"])}
+
+        @route("POST", "/api/update/download")
+        def update_download(self, m, body, q):
+            # abre no navegador padrão; o endereço vem da nossa consulta ao GitHub, nunca da página
+            ctx.open_url(ctx.updates.download_url())
+            return {"ok": True}
 
         @route("POST", "/api/open")
         def open_(self, m, body, q):

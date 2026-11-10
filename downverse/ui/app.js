@@ -143,6 +143,18 @@
   function setValue(el, value) { if (document.activeElement !== el && el.value !== value) el.value = value; }
   function setChecked(el, v) { if (el.checked !== !!v) el.checked = !!v; }
 
+  // Aviso de versão nova (aparece na tela Baixar e em Configurações).
+  async function downloadUpdate() {
+    try { await api.post("/api/update/download"); toast(S.st.update.has_installer ? "Baixando o instalador no navegador. Abra o arquivo para atualizar." : "Página da versão nova aberta no navegador."); }
+    catch (e) { toast(e.message, true); }
+  }
+  function updateBanner(up) {
+    return h("div", { class: "banner blue update" }, icon("arrow-down-to-line"),
+      h("div", { class: "grow" }, h("p", { text: `Versão ${up.latest} disponível. Você está na ${up.current}.` })),
+      h("button", { class: "btn primary xs", type: "button", onClick: downloadUpdate }, icon("download", "sm"), up.has_installer ? "Baixar instalador" : "Ver versão nova"),
+      h("button", { class: "btn ghost xs", type: "button", title: "Não avisar de novo sobre esta versão", onClick: () => save({ skipped_version: up.latest }) }, "Pular esta versão"));
+  }
+
   // ───────────────────────── tela: Baixar ─────────────────────────
   function mountDownload(root) {
     const R = {};
@@ -274,9 +286,15 @@
       R.dest.textContent = abbrevPath(st.output_dir); R.dest.title = st.output_dir;
 
       // avisos
-      R.banners.replaceChildren(); R.banners.classList.toggle("hidden", st.ffmpeg && cfg.auth.method !== "none");
-      if (!st.ffmpeg) R.banners.append(h("div", { class: "banner" }, icon("triangle-alert"), h("p", { text: "FFmpeg não encontrado. Sem ele não dá para juntar áudio e vídeo nem converter legendas e thumbnails. Instale o FFmpeg ou rode: pip install imageio-ffmpeg." })));
-      if (cfg.auth.method === "none") R.banners.append(h("div", { class: "banner blue" }, icon("info"), h("p", { text: "Quase todos os VODs do Weverse exigem login. Conecte sua conta na aba Conta antes de baixar." })));
+      const up = st.update || {}, showUpdate = up.notify && cfg.check_updates;
+      const upKey = showUpdate ? up.latest : "";
+      if (R.upKey !== upKey || R.bannerKey !== `${st.ffmpeg}|${cfg.auth.method}`) {
+        R.upKey = upKey; R.bannerKey = `${st.ffmpeg}|${cfg.auth.method}`;
+        R.banners.replaceChildren(); R.banners.classList.toggle("hidden", st.ffmpeg && cfg.auth.method !== "none" && !showUpdate);
+        if (showUpdate) R.banners.append(updateBanner(up));
+        if (!st.ffmpeg) R.banners.append(h("div", { class: "banner" }, icon("triangle-alert"), h("p", { text: "FFmpeg não encontrado. Sem ele não dá para juntar áudio e vídeo nem converter legendas e thumbnails. Instale o FFmpeg ou rode: pip install imageio-ffmpeg." })));
+        if (cfg.auth.method === "none") R.banners.append(h("div", { class: "banner blue" }, icon("info"), h("p", { text: "Quase todos os VODs do Weverse exigem login. Conecte sua conta na aba Conta antes de baixar." })));
+      }
 
       // conta
       const method = { none: "Sem conta conectada", browser: `Sessão do ${cfg.auth.browser}`, file: "Arquivo cookies.txt", token: "Token de acesso" }[cfg.auth.method];
@@ -724,6 +742,16 @@
             row("Downloads ao mesmo tempo", "Mais de um pode ser mais rápido, mas o Weverse pode limitar.", sel("concurrent_downloads", [["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"]], Number)),
             row("Substituir arquivos existentes", "Baixa de novo mesmo que a live já esteja na biblioteca.", sw("overwrite"))),
           h("section", { class: "card" }, h("div", { class: "card-head" }, h("div", {}, h("h3", { text: "Sobre" }))),
+            row("Avisar sobre versões novas", "Ao abrir, consulta a última versão publicada no GitHub. Nada é baixado sem você pedir.", sw("check_updates")),
+            h("div", { class: "setrow" }, C.upText = h("div", { class: "t" }),
+              h("div", { class: "ctl row-gap" },
+                C.upGet = h("button", { class: "btn primary xs", type: "button", onClick: downloadUpdate }, icon("download", "sm"), "Baixar"),
+                C.upCheck = h("button", { class: "btn soft xs", type: "button", onClick: async () => {
+                  C.upCheck.disabled = true; C.upBusy = true; update();
+                  try { const r = await api.post("/api/update/check"); S.st.update = r.update; if (r.update.error) toast(r.update.error, true); else if (!r.update.available) toast("Você já está na versão mais recente."); }
+                  catch (e) { toast(e.message, true); }
+                  C.upCheck.disabled = false; C.upBusy = false; update();
+                } }, icon("rotate-cw", "sm"), "Verificar agora"))),
             C.about = h("p", { class: "hint" }))))));
 
     function drawTree() {
@@ -743,7 +771,11 @@
       setValue(C.subdir, cfg.subtitles_dir_name);
       for (const k of ["artist_mode", "date_timezone", "subtitle_format", "quality"]) setValue(C[k], cfg[k]);
       setValue(C.concurrent_downloads, String(cfg.concurrent_downloads));
-      for (const k of ["subtitles", "fan_subtitles", "thumbnail", "overwrite"]) setChecked(C[k], cfg[k]);
+      for (const k of ["subtitles", "fan_subtitles", "thumbnail", "overwrite", "check_updates"]) setChecked(C[k], cfg[k]);
+      const up = st.update || {};
+      C.upText.textContent = C.upBusy ? "Consultando…" : up.available ? `Versão ${up.latest} disponível (você está na ${up.current})` : up.checked && !up.error ? `Você está na versão mais recente (${up.current})` : `Versão instalada: ${up.current || st.version}`;
+      C.upGet.classList.toggle("hidden", !up.available);
+      C.upGet.lastChild.textContent = up.has_installer ? "Baixar instalador" : "Ver versão nova";
       langs.update(); drawTree();
       C.about.textContent = `Downverse ${st.version} usando yt-dlp ${st.ytdlp}. FFmpeg: ${st.ffmpeg ? "encontrado" : "não encontrado"}. Projeto independente, sem vínculo com a Weverse Company. Use só para uso pessoal e respeite os termos do Weverse.`;
     }

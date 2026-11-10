@@ -45,6 +45,11 @@ def main() -> None:
 
     ctx = AppContext(token="demo")
     ctx.img_src_extra = "http://127.0.0.1:*"
+    # simula uma versão nova publicada, para ver o aviso de atualização (nada é consultado na rede)
+    from downverse.updates import UpdateChecker
+    ctx.updates = UpdateChecker(current="0.1.3", frozen=True, fetch=lambda: {"tag_name": "v0.1.9", "assets": []})
+    ctx.updates.check()
+    ctx.open_url = lambda url: print("abriria:", url)
     cookies = tmp / "cookies.txt"      # sessão de mentira, só para a interface mostrar "conectado"
     cookies.write_text("# Netscape HTTP Cookie File\n.weverse.io\tTRUE\t/\tTRUE\t4102444800\twe2_refresh_token\tdemo\n", encoding="utf-8")
     ctx.settings.update({"output_dir": str(tmp / "Videos"), "auth": {"method": "file", "cookie_file": str(cookies)}})

@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -44,6 +45,8 @@ DEFAULTS: dict = {
     "concurrent_downloads": 1,
     "overwrite": False,
     "theme": "light",              # light | dark
+    "check_updates": True,         # avisar quando houver versão nova
+    "skipped_version": "",         # versão que o usuário pediu para não avisar
     "auth": {
         "method": "none",          # none | browser | file | token
         "browser": "firefox",
@@ -91,6 +94,9 @@ def normalize(raw: dict) -> dict:
         cfg["concurrent_downloads"] = 1
     cfg["overwrite"] = bool(raw.get("overwrite", False))
     cfg["theme"] = _pick(str(raw.get("theme", "")), ("light", "dark"), "light")
+    cfg["check_updates"] = bool(raw.get("check_updates", True))
+    skipped = str(raw.get("skipped_version") or "").strip()
+    cfg["skipped_version"] = skipped if re.fullmatch(r"\d+(\.\d+){0,3}", skipped) else ""
 
     auth = raw.get("auth") if isinstance(raw.get("auth"), dict) else {}
     cfg["auth"] = {

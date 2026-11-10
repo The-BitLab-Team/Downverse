@@ -79,6 +79,12 @@ A cada commit na branch `main`, o GitHub Actions (`.github/workflows/release.yml
 
 A versão é `MAIOR.MENOR.N`: `MAIOR.MENOR` vem de `__version__` em `downverse/__init__.py` e `N` é o número da execução. Para lançar uma versão maior ou menor, mude `__version__` (por exemplo para `0.2.0`). Para commitar sem gerar release, escreva `[skip release]` na mensagem do commit. Se os testes ou o build falharem, nenhuma release é publicada.
 
+### Aviso de versão nova
+
+Ao abrir, o Downverse consulta a última release no GitHub. Se houver uma versão mais nova, aparece um aviso na tela Baixar com o botão **Baixar instalador** (abre o download no navegador; depois é só executar o instalador por cima) e a opção **Pular esta versão**. Nada é baixado ou instalado sem você pedir. Em **Configurações → Sobre** dá para desligar o aviso ou clicar em **Verificar agora**.
+
+Rodando pelo código-fonte (`iniciar.bat`), o aviso só aparece quando muda a versão maior ou menor, já que o terceiro número só existe nas versões instaladas.
+
 ## Usar em Linux ou macOS
 
 ```bash
