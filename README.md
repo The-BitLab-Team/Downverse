@@ -41,6 +41,11 @@ Vídeos/
 - Duas lives no mesmo dia: a segunda vai para `2026-03-15 (2)`, e assim por diante.
 - Nomes de pastas e arquivos são limpos de caracteres que o Windows não aceita.
 
+## Já baixado e downloads interrompidos
+
+- **Não baixa duas vezes.** O Downverse lembra do que já baixou e também reconhece o vídeo que já está na pasta, mesmo se o histórico foi apagado ou o programa foi reinstalado: ao tentar baixar, ele encontra o arquivo, pula o download e devolve a live para a Biblioteca. Para baixar de novo, ligue "Substituir arquivos existentes".
+- **Retoma de onde parou.** Se o programa fechar (ou o computador desligar) no meio, a fila pendente volta sozinha na próxima abertura e cada vídeo continua do ponto em que estava. Se a internet cair, o pedaço baixado fica guardado e o "Tentar de novo" continua dele. Só o "Cancelar" apaga o que já tinha vindo.
+
 ## Links aceitos
 
 | Você cola | O que acontece |
@@ -79,11 +84,15 @@ A cada commit na branch `main`, o GitHub Actions (`.github/workflows/release.yml
 
 A versão é `MAIOR.MENOR.N`: `MAIOR.MENOR` vem de `__version__` em `downverse/__init__.py` e `N` é o número da execução. Para lançar uma versão maior ou menor, mude `__version__` (por exemplo para `0.2.0`). Para commitar sem gerar release, escreva `[skip release]` na mensagem do commit. Se os testes ou o build falharem, nenhuma release é publicada.
 
-### Aviso de versão nova
+### Atualização pelo próprio programa
 
-Ao abrir, o Downverse consulta a última release no GitHub. Se houver uma versão mais nova, aparece um aviso na tela Baixar com o botão **Baixar instalador** (abre o download no navegador; depois é só executar o instalador por cima) e a opção **Pular esta versão**. Nada é baixado ou instalado sem você pedir. Em **Configurações → Sobre** dá para desligar o aviso ou clicar em **Verificar agora**.
+Ao abrir, o Downverse consulta a última release no GitHub. Se houver uma versão mais nova, aparece um aviso na tela Baixar:
 
-Rodando pelo código-fonte (`iniciar.bat`), o aviso só aparece quando muda a versão maior ou menor, já que o terceiro número só existe nas versões instaladas.
+- **Atualizar agora** (versão instalada no Windows): baixa o instalador, confere se o arquivo bate com o publicado (tamanho e SHA-256), fecha o programa, instala e abre de novo. Configurações e biblioteca são mantidas. Com downloads em andamento, ele pede para esperar.
+- **Pular esta versão:** esconde o aviso até sair a próxima.
+- Na versão portátil e rodando pelo código-fonte, o botão abre a página da release no navegador.
+
+Nada é baixado ou instalado sem você clicar. Em **Configurações → Sobre** dá para desligar o aviso ou clicar em **Verificar agora**. Rodando pelo código-fonte (`iniciar.bat`), o aviso só aparece quando muda a versão maior ou menor.
 
 ## Usar em Linux ou macOS
 

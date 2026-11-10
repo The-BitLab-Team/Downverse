@@ -1,6 +1,8 @@
 """Fila de downloads e análise de canais (rodam em threads)."""
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 import uuid
@@ -10,6 +12,7 @@ from pathlib import Path
 from yt_dlp.utils import DownloadCancelled
 
 from .engine import (
+    LIBRARY_FIELDS, download_options_from_settings,
     AlreadyDownloaded, DownloadCallbacks, DownverseError, Engine, friendly_error,
 )
 from .library import Library
@@ -75,10 +78,14 @@ class Item:
 class DownloadManager:
     MAX_WORKERS = 4
 
-    def __init__(self, settings: SettingsStore, library: Library, engine: Engine):
+    def __init__(self, settings: SettingsStore, library: Library, engine: Engine,
+                 state_path: Path | None = None):
         self.settings = settings
         self.library = library
         self.engine = engine
+        self.state_path = state_path     # onde a fila pendente fica salva (None = não salva)
+        self.restored = 0                # quantos downloads voltaram para a fila ao abrir
+        self._persist_lock = threading.Lock()
         self._items: dict[str, Item] = {}
         self._lock = threading.RLock()
         self._cv = threading.Condition()
@@ -168,13 +175,46 @@ class DownloadManager:
             item.progress, item.status, item.phase, item.speed, item.eta = 100.0, "done", "Concluído", None, None
             with self._lock:
                 self._session_bytes += result.get("size") or 0
-            self.library.add(result["id"], {
-                k: result[k] for k in (
-                    "title", "community", "slug", "uploader", "timestamp", "duration", "dir",
-                    "video", "thumbnail", "subtitles", "size", "height",
-                )
-            })
+            self.library.add(result["id"], {k: result[k] for k in LIBRARY_FIELDS})
         item.finished_at = time.time()
+        self._persist()
+
+    # -- fila salva em disco ----------------------------------------------------------
+    def _persist(self) -> None:
+        """Grava o que ainda falta baixar. Se o programa fechar no meio, ``restore`` traz de volta."""
+        if not self.state_path:
+            return
+        with self._lock:
+            pending = [{
+                "id": i.live_id, "url": i.url, "title": i.title, "uploader": i.uploader, "community": i.community,
+                "timestamp": i.timestamp, "thumbnail": i.thumbnail, "options": i.options,
+            } for i in self._items.values() if i.status in ACTIVE and not i.cancel.is_set()]
+        with self._persist_lock:
+            try:
+                self.state_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.state_path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(pending, ensure_ascii=False), encoding="utf-8")
+                os.replace(tmp, self.state_path)
+            except OSError:
+                pass
+
+    def restore(self) -> int:
+        """Recoloca na fila os downloads que estavam pendentes quando o programa fechou."""
+        if not self.state_path:
+            return 0
+        try:
+            saved = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0
+        defaults = download_options_from_settings(self.settings.get())
+        count = 0
+        for entry in saved if isinstance(saved, list) else []:
+            if not isinstance(entry, dict) or not str(entry.get("url", "")).startswith("https://weverse.io/"):
+                continue
+            options = entry.get("options") if isinstance(entry.get("options"), dict) else {}
+            count += len(self.add([entry], {**defaults, **{k: v for k, v in options.items() if k in defaults}}))
+        self.restored = count
+        return count
 
     # -- API ----------------------------------------------------------------------
     def add(self, entries: list[dict], options: dict) -> list[str]:
@@ -201,6 +241,7 @@ class DownloadManager:
         with self._cv:
             self._pending.extend(ids)
             self._cv.notify_all()
+        self._persist()
         return ids
 
     def snapshot(self) -> dict:
@@ -210,7 +251,7 @@ class DownloadManager:
             for i in self._items.values():
                 counts[i.status] += 1
             session_bytes = self._session_bytes
-        return {"items": items, "counts": counts, "session_bytes": session_bytes}
+        return {"items": items, "counts": counts, "session_bytes": session_bytes, "restored": self.restored}
 
     def cancel(self, item_id: str) -> bool:
         with self._lock:
@@ -222,6 +263,7 @@ class DownloadManager:
                 item.status, item.phase, item.finished_at = "canceled", "Cancelado", time.time()
         with self._cv:
             self._cv.notify_all()
+        self._persist()
         return True
 
     def cancel_all(self) -> int:
@@ -243,6 +285,7 @@ class DownloadManager:
         with self._cv:
             self._pending.append(item_id)
             self._cv.notify_all()
+        self._persist()
         return True
 
     def clear_finished(self) -> int:

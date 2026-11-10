@@ -14,6 +14,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 import webbrowser
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,7 +30,7 @@ from .links import KIND_CHANNEL, LinkError, parse_link
 from .manager import AnalysisManager, DownloadManager
 from .paths import default_videos_dir
 from .settings import DEFAULTS, SettingsStore, normalize
-from .updates import UpdateChecker
+from .updates import UpdateChecker, UpdateError
 
 UI_DIR = Path(__file__).parent / "ui"
 MAX_BODY = 1_000_000
@@ -57,11 +58,13 @@ class AppContext:
         self.settings = settings or SettingsStore()
         self.library = library or Library()
         self.engine = Engine(self.settings, self.library)
-        self.downloads = DownloadManager(self.settings, self.library, self.engine)
+        self.downloads = DownloadManager(self.settings, self.library, self.engine,
+                                         state_path=self.settings.path.parent / "queue.json")
         self.analyses = AnalysisManager(self.settings, self.library, self.engine)
         self.engine.is_busy = lambda: self.downloads._running > 0
         self.updates = UpdateChecker()     # só consulta a rede quando alguém manda (app.py ou o botão)
         self.open_url = webbrowser.open    # trocável nos testes
+        self.quit = lambda: os._exit(0)    # fecha o programa; a janela nativa troca por um fechamento limpo
         self.token = token or secrets.token_urlsafe(24)
         self.port = 0
         self.pick_file = None              # idem, para escolher o cookies.txt
@@ -339,6 +342,22 @@ def make_handler(ctx: AppContext):
         @route("POST", "/api/update/check")
         def update_check(self, m, body, q):
             ctx.updates.check()
+            return {"update": ctx.updates.status(ctx.settings.get()["skipped_version"])}
+
+        @route("POST", "/api/update/install")
+        def update_install(self, m, body, q):
+            counts = ctx.downloads.snapshot()["counts"]
+            if counts["downloading"] or counts["queued"]:
+                raise ApiError("Há downloads em andamento. Espere terminarem ou cancele antes de atualizar.")
+
+            def close_app():
+                time.sleep(1.5)  # dá tempo de a tela mostrar "instalando" antes de fechar
+                ctx.quit()
+
+            try:
+                ctx.updates.start_install(close_app)
+            except UpdateError as exc:
+                raise ApiError(str(exc))
             return {"update": ctx.updates.status(ctx.settings.get()["skipped_version"])}
 
         @route("POST", "/api/update/download")

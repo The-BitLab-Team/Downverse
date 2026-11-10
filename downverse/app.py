@@ -1,6 +1,7 @@
 """Abre o Downverse: janela nativa (pywebview) ou, se não houver, o navegador padrão."""
 from __future__ import annotations
 
+import os
 import threading
 import time
 import webbrowser
@@ -43,6 +44,7 @@ def run_gui(port: int = 0, prefer_browser: bool = False) -> None:
     server = make_server(ctx, port)
     threading.Thread(target=server.serve_forever, name="downverse-http", daemon=True).start()
     url = f"http://127.0.0.1:{ctx.port}/?t={ctx.token}"
+    ctx.downloads.restore()  # retoma o que estava na fila quando o programa fechou
     ctx.updates.check_in_background(lambda: ctx.settings.get()["check_updates"])
 
     window = None
@@ -54,6 +56,12 @@ def run_gui(port: int = 0, prefer_browser: bool = False) -> None:
                 "Downverse", url, width=1360, height=860, min_size=(1040, 700), background_color="#EEF0F8")
             ctx.pick_folder = _native_folder_picker(window)
             ctx.pick_file = _native_file_picker(window)
+
+            def quit_app() -> None:
+                threading.Timer(4, lambda: os._exit(0)).start()  # garantia, se a janela não fechar
+                window.destroy()
+
+            ctx.quit = quit_app
         except Exception:
             window = None
 
@@ -65,6 +73,7 @@ def run_gui(port: int = 0, prefer_browser: bool = False) -> None:
             return
         except Exception:
             ctx.pick_folder = ctx.pick_file = None  # sem janela nativa: cai para o navegador
+            ctx.quit = lambda: os._exit(0)
 
     print(f"Downverse rodando em {url}\nPressione Ctrl+C para sair.", flush=True)
     webbrowser.open(url)

@@ -234,6 +234,23 @@ def unique_live_folder(candidate: Path, live_id: str, owner_of: Callable[[Path],
     raise RuntimeError("Não foi possível escolher uma pasta livre para esta live.")
 
 
+def find_on_disk(candidate: Path, base: str) -> tuple[Path, Path] | None:
+    """Procura o vídeo desta live já salvo na pasta da data (ou nas irmãs ``(2)``, ``(3)``…).
+
+    Serve para reconhecer downloads que o histórico não conhece: histórico apagado, pasta copiada
+    de outro computador, programa reinstalado. Devolve (pasta, vídeo) ou None.
+    """
+    for n in range(1, 1000):
+        folder = candidate if n == 1 else candidate.with_name(f"{candidate.name} ({n})")
+        if not folder.is_dir():
+            return None
+        for ext in VIDEO_EXTENSIONS:
+            video = folder / f"{base}{ext}"
+            if video.is_file() and video.stat().st_size > 0:
+                return folder, video
+    return None
+
+
 def file_base_name(title: str, live_id: str) -> str:
     """Nome-base (sem extensão) dos arquivos da live."""
     return sanitize_component(title, fallback=f"Live {live_id}", max_chars=90, max_bytes=170)

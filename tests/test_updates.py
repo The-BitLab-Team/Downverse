@@ -50,15 +50,14 @@ def test_checker_never_raises_and_keeps_last_answer():
     assert UpdateChecker(current="0.1.3", fetch=lambda: {"tag_name": "nightly"}).check()["error"]
 
 
-def test_download_url_only_trusts_the_repo(monkeypatch):
-    monkeypatch.setattr("sys.platform", "win32")
-    good = UpdateChecker(current="0.1.3", frozen=True, fetch=lambda: release("v0.1.7"))
+def test_download_url_only_trusts_the_repo():
+    good = UpdateChecker(current="0.1.3", frozen=True, windows=True, fetch=lambda: release("v0.1.7"))
     good.check()
     assert good.download_url().endswith("/Downverse-Setup-0.1.7.exe") and good.status()["has_installer"]
 
     evil = release("v0.1.7", page="https://evil.example/x")
     evil["assets"][1]["browser_download_url"] = "https://evil.example/Downverse-Setup-0.1.7.exe"
-    checker = UpdateChecker(current="0.1.3", frozen=True, fetch=lambda: evil)
+    checker = UpdateChecker(current="0.1.3", frozen=True, windows=True, fetch=lambda: evil)
     checker.check()
     assert checker.download_url() == f"https://github.com/{REPO}/releases/latest"
 
@@ -85,3 +84,106 @@ def test_api_update_flow(api):  # noqa: F811
     api("POST", "/api/settings", {"skipped_version": "<script>"})            # só aceita número de versão
     assert ctx.settings.get()["skipped_version"] == ""
     assert api("POST", "/api/settings", {"check_updates": False})[1]["settings"]["check_updates"] is False
+
+
+# ------------------------------------------------------------------ atualização com um clique
+
+def one_click(tmp_path, payload=b"instalador" * 100, size=None, digest=None, **kw):
+    import hashlib
+
+    data = release("v0.1.9")
+    data["assets"][1]["size"] = len(payload) if size is None else size
+    data["assets"][1]["digest"] = digest if digest is not None else "sha256:" + hashlib.sha256(payload).hexdigest()
+    log = {"launched": [], "closed": 0, "urls": []}
+
+    def download(url, dest, progress):
+        log["urls"].append(url)
+        dest.write_bytes(payload)
+        progress(len(payload))
+
+    checker = UpdateChecker(current="0.1.3", frozen=True, windows=True, fetch=lambda: data, work_dir=tmp_path / "upd",
+                            download=kw.get("download", download), launch=kw.get("launch", log["launched"].append))
+    checker.check()
+    return checker, log
+
+
+def wait_install(checker):
+    import time
+
+    for _ in range(200):
+        state = checker.status()["install"]["state"]
+        if state != "downloading":
+            return checker.status()["install"]
+        time.sleep(0.01)
+    raise AssertionError("a atualização não terminou")
+
+
+def test_one_click_downloads_verifies_and_launches(tmp_path):
+    checker, log = one_click(tmp_path)
+    assert checker.status()["can_install"] is True
+    closed = []
+    checker.start_install(lambda: closed.append(1))
+    assert wait_install(checker)["state"] == "installing"
+    for _ in range(100):
+        if closed:
+            break
+        __import__("time").sleep(0.01)
+    assert closed == [1]                                                   # o app fecha depois de abrir o instalador
+    assert log["urls"] == [f"https://github.com/{REPO}/releases/download/v0.1.9/Downverse-Setup-0.1.9.exe"]
+    assert [p.name for p in log["launched"]] == ["Downverse-Setup-0.1.9.exe"]
+    assert log["launched"][0].read_bytes().startswith(b"instalador")
+
+
+@pytest.mark.parametrize("bad", [dict(size=5), dict(digest="sha256:" + "0" * 64)])
+def test_one_click_rejects_a_file_that_does_not_match(tmp_path, bad):
+    checker, log = one_click(tmp_path, **bad)
+    closed = []
+    checker.start_install(lambda: closed.append(1))
+    install = wait_install(checker)
+    assert install["state"] == "error" and "diferente do publicado" in install["error"]
+    assert log["launched"] == [] and closed == []                          # nada é executado, o app continua aberto
+    assert list((tmp_path / "upd").glob("*")) == []
+
+
+def test_one_click_network_failure_can_be_retried(tmp_path):
+    def broken(url, dest, progress):
+        raise OSError("caiu")
+
+    checker, log = one_click(tmp_path, download=broken)
+    checker.start_install(lambda: None)
+    assert "internet" in wait_install(checker)["error"]
+    checker._download = lambda url, dest, progress: dest.write_bytes(b"instalador" * 100)
+    checker.start_install(lambda: None)
+    assert wait_install(checker)["state"] == "installing"
+
+
+def test_one_click_only_for_installed_windows_and_newer(tmp_path):
+    from downverse.updates import UpdateError
+
+    for kw in (dict(frozen=False, windows=True), dict(frozen=True, windows=False)):
+        checker = UpdateChecker(current="0.1.3", fetch=lambda: release("v0.1.9"), **kw)
+        checker.check()
+        assert checker.status()["can_install"] is False
+        with pytest.raises(UpdateError):
+            checker.start_install(lambda: None)
+    same = UpdateChecker(current="0.1.9", frozen=True, windows=True, fetch=lambda: release("v0.1.9"))
+    same.check()
+    with pytest.raises(UpdateError):
+        same.start_install(lambda: None)
+    # instalador hospedado fora do repositório é ignorado
+    evil = release("v0.1.9")
+    evil["assets"][1]["browser_download_url"] = "https://evil.example/Downverse-Setup-0.1.9.exe"
+    checker = UpdateChecker(current="0.1.3", frozen=True, windows=True, fetch=lambda: evil)
+    checker.check()
+    assert checker.status()["can_install"] is False
+
+
+def test_api_install_refuses_while_downloading(api, tmp_path):  # noqa: F811
+    ctx = api.ctx
+    ctx.updates, log = one_click(tmp_path)
+    quits = []
+    ctx.quit = lambda: quits.append(1)
+    ctx.downloads.snapshot = lambda: {"counts": {"downloading": 1, "queued": 0}}
+    status, body = api("POST", "/api/update/install")
+    assert status == 400 and "downloads em andamento" in body["error"]
+    assert log["launched"] == []

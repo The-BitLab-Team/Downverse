@@ -46,3 +46,11 @@ Name: "{autodesktop}\Downverse"; Filename: "{app}\Downverse.exe"; Tasks: desktop
 
 [Run]
 Filename: "{app}\Downverse.exe"; Description: "{cm:LaunchProgram,Downverse}"; Flags: nowait postinstall skipifsilent
+; Atualização feita pelo próprio programa (instalador silencioso com /RELAUNCH=1): abre o Downverse de novo.
+Filename: "{app}\Downverse.exe"; Flags: nowait runasoriginaluser; Check: RelaunchRequested
+
+[Code]
+function RelaunchRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;

@@ -144,14 +144,31 @@
   function setChecked(el, v) { if (el.checked !== !!v) el.checked = !!v; }
 
   // Aviso de versão nova (aparece na tela Baixar e em Configurações).
-  async function downloadUpdate() {
-    try { await api.post("/api/update/download"); toast(S.st.update.has_installer ? "Baixando o instalador no navegador. Abra o arquivo para atualizar." : "Página da versão nova aberta no navegador."); }
-    catch (e) { toast(e.message, true); }
+  // Versão instalada no Windows: atualiza com um clique. Nos outros casos, abre o download/página no navegador.
+  async function runUpdate() {
+    const up = S.st.update;
+    try {
+      if (up.can_install) {
+        const r = await api.post("/api/update/install");
+        S.st.update = r.update; current && current.update();
+      } else {
+        await api.post("/api/update/download");
+        toast(up.has_installer ? "Baixando o instalador no navegador. Abra o arquivo para atualizar." : "Página da versão nova aberta no navegador.");
+      }
+    } catch (e) { toast(e.message, true); }
   }
+  const updateLabel = (up) => up.can_install ? "Atualizar agora" : up.has_installer ? "Baixar instalador" : "Ver versão nova";
+  const updateBusyText = (up) => ({
+    downloading: `Baixando a versão ${up.latest}… ${up.install.progress}%`,
+    installing: "Instalando. O Downverse vai fechar e abrir de novo sozinho.",
+  })[up.install && up.install.state] || "";
   function updateBanner(up) {
-    return h("div", { class: "banner blue update" }, icon("arrow-down-to-line"),
-      h("div", { class: "grow" }, h("p", { text: `Versão ${up.latest} disponível. Você está na ${up.current}.` })),
-      h("button", { class: "btn primary xs", type: "button", onClick: downloadUpdate }, icon("download", "sm"), up.has_installer ? "Baixar instalador" : "Ver versão nova"),
+    const busy = updateBusyText(up);
+    if (busy) return h("div", { class: "banner blue update" }, icon("loader-circle", "spin"), h("div", { class: "grow" }, h("p", { text: busy })));
+    const failed = up.install && up.install.state === "error";
+    return h("div", { class: `banner ${failed ? "red" : "blue"} update` }, icon(failed ? "triangle-alert" : "arrow-down-to-line"),
+      h("div", { class: "grow" }, h("p", { text: failed ? up.install.error : `Versão ${up.latest} disponível. Você está na ${up.current}.` })),
+      h("button", { class: "btn primary xs", type: "button", onClick: runUpdate }, icon("download", "sm"), failed ? "Tentar de novo" : updateLabel(up)),
       h("button", { class: "btn ghost xs", type: "button", title: "Não avisar de novo sobre esta versão", onClick: () => save({ skipped_version: up.latest }) }, "Pular esta versão"));
   }
 
@@ -286,8 +303,10 @@
       R.dest.textContent = abbrevPath(st.output_dir); R.dest.title = st.output_dir;
 
       // avisos
-      const up = st.update || {}, showUpdate = up.notify && cfg.check_updates;
-      const upKey = showUpdate ? up.latest : "";
+      const up = st.update || { install: {} };
+      const upBusy = !!updateBusyText(up);   // durante a atualização o aviso aparece mesmo se a versão foi pulada
+      const showUpdate = (up.notify && cfg.check_updates) || upBusy || (up.install && up.install.state === "error");
+      const upKey = showUpdate ? `${up.latest}|${up.install.state}|${up.install.progress}|${up.can_install}` : "";
       if (R.upKey !== upKey || R.bannerKey !== `${st.ffmpeg}|${cfg.auth.method}`) {
         R.upKey = upKey; R.bannerKey = `${st.ffmpeg}|${cfg.auth.method}`;
         R.banners.replaceChildren(); R.banners.classList.toggle("hidden", st.ffmpeg && cfg.auth.method !== "none" && !showUpdate);
@@ -745,7 +764,7 @@
             row("Avisar sobre versões novas", "Ao abrir, consulta a última versão publicada no GitHub. Nada é baixado sem você pedir.", sw("check_updates")),
             h("div", { class: "setrow" }, C.upText = h("div", { class: "t" }),
               h("div", { class: "ctl row-gap" },
-                C.upGet = h("button", { class: "btn primary xs", type: "button", onClick: downloadUpdate }, icon("download", "sm"), "Baixar"),
+                C.upGet = h("button", { class: "btn primary xs", type: "button", onClick: runUpdate }, icon("download", "sm"), "Baixar"),
                 C.upCheck = h("button", { class: "btn soft xs", type: "button", onClick: async () => {
                   C.upCheck.disabled = true; C.upBusy = true; update();
                   try { const r = await api.post("/api/update/check"); S.st.update = r.update; if (r.update.error) toast(r.update.error, true); else if (!r.update.available) toast("Você já está na versão mais recente."); }
@@ -773,9 +792,9 @@
       setValue(C.concurrent_downloads, String(cfg.concurrent_downloads));
       for (const k of ["subtitles", "fan_subtitles", "thumbnail", "overwrite", "check_updates"]) setChecked(C[k], cfg[k]);
       const up = st.update || {};
-      C.upText.textContent = C.upBusy ? "Consultando…" : up.available ? `Versão ${up.latest} disponível (você está na ${up.current})` : up.checked && !up.error ? `Você está na versão mais recente (${up.current})` : `Versão instalada: ${up.current || st.version}`;
-      C.upGet.classList.toggle("hidden", !up.available);
-      C.upGet.lastChild.textContent = up.has_installer ? "Baixar instalador" : "Ver versão nova";
+      C.upText.textContent = updateBusyText(up) ? updateBusyText(up) : up.install && up.install.state === "error" ? up.install.error : C.upBusy ? "Consultando…" : up.available ? `Versão ${up.latest} disponível (você está na ${up.current})` : up.checked && !up.error ? `Você está na versão mais recente (${up.current})` : `Versão instalada: ${up.current || st.version}`;
+      C.upGet.classList.toggle("hidden", !up.available || !!updateBusyText(up));
+      C.upGet.lastChild.textContent = updateLabel(up);
       langs.update(); drawTree();
       C.about.textContent = `Downverse ${st.version} usando yt-dlp ${st.ytdlp}. FFmpeg: ${st.ffmpeg ? "encontrado" : "não encontrado"}. Projeto independente, sem vínculo com a Weverse Company. Use só para uso pessoal e respeite os termos do Weverse.`;
     }
@@ -837,6 +856,7 @@
     buildNav();
     $("#theme-toggle").addEventListener("change", (e) => save({ theme: e.target.checked ? "dark" : "light" }));
     await refresh();
+    if (S.st && S.st.queue.restored) toast(`Retomando ${plural(S.st.queue.restored, "download", "downloads")} de onde parou.`);
     if (!S.st) { $("#main").replaceChildren(h("div", { class: "page" }, h("div", { class: "banner red" }, icon("triangle-alert"), h("p", { text: "Não consegui falar com o Downverse. Feche e abra o aplicativo de novo." })))); return; }
     go("download");
     loop();

@@ -23,6 +23,7 @@ from yt_dlp.utils import DownloadCancelled, DownloadError, ExtractorError
 
 from .library import Library
 from .paths import (
+    find_on_disk,
     LiveMeta, file_base_name, live_folder, sanitize_component, unique_live_folder,
 )
 from .auth import TOKEN_COOKIES, AuthError, prepare_cookie_file
@@ -179,6 +180,12 @@ def download_options_from_settings(cfg: dict) -> dict:
         "thumbnail", "subtitles_dir_name", "artist_mode", "date_timezone", "overwrite",
     )
     return {k: cfg[k] for k in keys}
+
+
+LIBRARY_FIELDS = (
+    "title", "community", "slug", "uploader", "timestamp", "duration", "dir",
+    "video", "thumbnail", "subtitles", "size", "height",
+)
 
 
 class Engine:
@@ -398,13 +405,24 @@ class Engine:
                 raise AlreadyDownloaded("Já baixada. Ative “Substituir arquivos existentes” para baixar de novo.")
 
             root = self.settings.output_root()
-            dest = unique_live_folder(
-                live_folder(root, meta, options["artist_mode"], options["date_timezone"]),
-                meta.live_id, self.library.owner_of_folder,
-            )
-            dest.mkdir(parents=True, exist_ok=True)
+            candidate = live_folder(root, meta, options["artist_mode"], options["date_timezone"])
             base = file_base_name(meta.title, meta.live_id)
             sub_dir = sanitize_component(options["subtitles_dir_name"], fallback="Legendas", max_chars=40)
+
+            # O arquivo já está na pasta, mas o histórico não sabe (histórico apagado, pasta copiada,
+            # programa reinstalado)? Reconhece, registra e não baixa de novo.
+            found = find_on_disk(candidate, base)
+            if found and self.library.owner_of_folder(found[0]) not in (None, meta.live_id):
+                found = None                       # essa pasta é de outra live do mesmo dia
+            if found and not options["overwrite"]:
+                entry = self._describe_result(None, found[0], base, sub_dir, meta, info, logger,
+                                              dict(options, subtitles=False, thumbnail=False))
+                self.library.add(meta.live_id, {k: entry[k] for k in LIBRARY_FIELDS})
+                raise AlreadyDownloaded("Já estava na pasta. Ative “Substituir arquivos existentes” para baixar de novo.")
+
+            # "substituir": regrava na mesma pasta em vez de abrir uma "(2)"
+            dest = found[0] if found else unique_live_folder(candidate, meta.live_id, self.library.owner_of_folder)
+            dest.mkdir(parents=True, exist_ok=True)
 
             ydl.params["paths"] = {"home": str(dest), "subtitle": str(dest / sub_dir)}
             ydl.params["outtmpl"] = {"default": base.replace("%", "%%") + ".%(ext)s"}
@@ -416,13 +434,17 @@ class Engine:
             cb.check_cancel()
             return self._describe_result(result, dest, base, sub_dir, meta, info, logger, options)
         except DownloadCancelled:
-            self._cleanup(dest)
+            self._cleanup(dest)            # o usuário cancelou: apaga o que já tinha vindo
             raise
-        except (AlreadyDownloaded, DownverseError):
+        except AlreadyDownloaded:
+            raise
+        except DownverseError:
             self._cleanup(dest)
             raise
         except Exception as exc:
-            self._cleanup(dest)
+            # Falha no meio (internet caiu, etc.): guarda os arquivos parciais para o
+            # "Tentar de novo" continuar de onde parou.
+            self._cleanup(dest, keep_partial=True)
             raise DownverseError(friendly_error(exc, logger.warnings)) from exc
         finally:
             ydl.close()
@@ -468,12 +490,14 @@ class Engine:
             "warnings": warnings,
         }
 
-    def _cleanup(self, dest: Path | None) -> None:
-        """Remove restos de um download interrompido e pastas vazias."""
+    def _cleanup(self, dest: Path | None, keep_partial: bool = False) -> None:
+        """Remove restos de um download interrompido (a não ser com ``keep_partial``) e pastas vazias."""
         if not dest or not dest.exists():
             return
         try:
             for p in dest.rglob("*"):
+                if keep_partial:
+                    break
                 if p.is_file() and (p.suffix in (".part", ".ytdl", ".temp") or ".part-" in p.name):
                     p.unlink(missing_ok=True)
             for folder in sorted((p for p in dest.rglob("*") if p.is_dir()), reverse=True):

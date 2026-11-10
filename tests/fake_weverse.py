@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -113,8 +114,32 @@ class MediaServer:
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
     throttle = 0.0   # segundos de espera a cada 4 KB (deixa o progresso visível nas demos)
 
+    ranges: list = []  # cabeçalhos Range recebidos (os testes de retomada conferem)
+
     def log_message(self, *a, **k):
         pass
+
+    def send_head(self):
+        rng = self.headers.get("Range")
+        m = re.fullmatch(r"bytes=(\d+)-(\d*)", rng or "")
+        path = self.translate_path(self.path)
+        if not m or not os.path.isfile(path):
+            return super().send_head()
+        type(self).ranges.append(rng)
+        size = os.path.getsize(path)
+        start = int(m.group(1))
+        end = min(int(m.group(2)) if m.group(2) else size - 1, size - 1)
+        if start >= size:
+            self.send_error(416)
+            return None
+        f = open(path, "rb")
+        f.seek(start)
+        self.send_response(206)
+        self.send_header("Content-Type", self.guess_type(path))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.end_headers()
+        return f
 
     def copyfile(self, source, outputfile):
         if not self.throttle:
