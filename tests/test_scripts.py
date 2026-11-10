@@ -29,3 +29,26 @@ def test_installer_files_exist():
         assert (ROOT / rel).is_file(), rel
     iss = (ROOT / "packaging/installer.iss").read_text(encoding="utf-8")
     assert "..\\dist\\Downverse\\*" in iss
+
+
+def test_release_workflow_runs_on_main_and_publishes():
+    yaml = pytest.importorskip("yaml")  # PyYAML não é dependência do app; roda onde estiver instalado
+
+    wf = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    triggers = wf.get("on") or wf.get(True)  # PyYAML lê a chave "on" como True
+    assert triggers["push"]["branches"] == ["main"]
+    assert set(wf["jobs"]) == {"version", "test", "build", "release"}
+    assert wf["jobs"]["release"]["permissions"]["contents"] == "write"
+    # a release só sai depois dos testes e do build
+    assert "build" in wf["jobs"]["release"]["needs"]
+    assert "test" in wf["jobs"]["build"]["needs"]
+
+
+def test_version_has_a_single_source():
+    import re
+
+    init = (ROOT / "downverse/__init__.py").read_text(encoding="utf-8")
+    assert re.search(r'^__version__ = "\d+\.\d+\.\d+"', init, re.M)  # o workflow lê MAIOR.MENOR daqui
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'dynamic = ["version"]' in pyproject
+    assert not re.search(r'^version\s*=\s*"', pyproject, re.M)  # sem número duplicado no pyproject

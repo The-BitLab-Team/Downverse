@@ -69,6 +69,16 @@ Dê dois cliques em **`criar_instalador.bat`**. Ele:
 
 O instalador funciona sem permissão de administrador, cria atalhos no Menu Iniciar e (opcional) na Área de Trabalho, e tem desinstalador.
 
+## Releases automáticas
+
+A cada commit na branch `main`, o GitHub Actions (`.github/workflows/release.yml`):
+
+1. roda os testes;
+2. gera o programa e o instalador para Windows e confere que o executável abre;
+3. publica uma **release nova** com `Downverse-Setup-<versão>.exe`, a versão portátil (`.zip`) e a lista do que mudou desde a release anterior.
+
+A versão é `MAIOR.MENOR.N`: `MAIOR.MENOR` vem de `__version__` em `downverse/__init__.py` e `N` é o número da execução. Para lançar uma versão maior ou menor, mude `__version__` (por exemplo para `0.2.0`). Para commitar sem gerar release, escreva `[skip release]` na mensagem do commit. Se os testes ou o build falharem, nenhuma release é publicada.
+
 ## Usar em Linux ou macOS
 
 ```bash
