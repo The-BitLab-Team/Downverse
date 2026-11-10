@@ -1,0 +1,6 @@
+# Motor de download (extrator do Weverse) + dependências recomendadas (cookies de navegador, etc.)
+yt-dlp[default]>=2026.10.26
+# FFmpeg embutido: usado se o ffmpeg não estiver instalado no sistema
+imageio-ffmpeg>=0.5.1
+# Janela nativa (opcional; sem ele o Downverse abre no navegador padrão)
+pywebview>=5.3; sys_platform != "linux"

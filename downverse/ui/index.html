@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Downverse</title>
+  <link rel="icon" type="image/svg+xml" href="img/logo.svg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!--ICONS-->
+<div class="app">
+  <aside class="side" aria-label="Navegação">
+    <div class="profile">
+      <img class="avatar" src="img/logo.svg" alt="" width="76" height="76">
+      <h1>Downverse</h1>
+      <p>VODs do Weverse, organizados</p>
+      <div class="pstats" id="pstats"></div>
+    </div>
+    <nav class="nav" id="nav" aria-label="Seções"></nav>
+    <div class="side-foot">
+      <label class="themerow">
+        <span class="nav-ico"><svg class="ic"><use href="#i-moon"/></svg></span>
+        <span>Tema escuro</span>
+        <span class="switch"><input type="checkbox" id="theme-toggle" aria-label="Tema escuro"><i></i></span>
+      </label>
+      <small id="versions"></small>
+    </div>
+  </aside>
+  <main class="main" id="main" tabindex="-1"></main>
+</div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
