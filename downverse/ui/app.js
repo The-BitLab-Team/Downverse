@@ -609,7 +609,7 @@
 
   // ───────────────────────── tela: Conta ─────────────────────────
   function mountAccount(root) {
-    const M = {};
+    const M = {}, cards = {};   // M: campos; cards: cartões dos métodos (não podem dividir as mesmas chaves)
     let result = null;
     const resultBox = h("div");
     const methodCard = (key, ic, title, text, body) => {
@@ -617,23 +617,46 @@
         onClick: (e) => { if (!e.target.closest(".body")) save({ auth: { method: key } }); },
         onKeydown: (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === el) { e.preventDefault(); save({ auth: { method: key } }); } } },
         h("div", { class: "mh" }, icon(ic), title), h("p", { text }), body ? h("div", { class: "body" }, body) : null);
-      M[key] = el; return el;
+      cards[key] = el; return el;
     };
-    M.browser = h("select", { class: "select sm", "aria-label": "Navegador", onChange: () => save({ auth: { browser: M.browser.value } }) },
-      ["firefox", "chrome", "edge", "brave", "chromium", "opera", "vivaldi", "safari"].map((b) => h("option", { value: b, text: { firefox: "Firefox", chrome: "Google Chrome", edge: "Microsoft Edge", brave: "Brave", chromium: "Chromium", opera: "Opera", vivaldi: "Vivaldi", safari: "Safari" }[b] })));
-    M.profile = h("input", { class: "input sm", placeholder: "Perfil do navegador (opcional)", "aria-label": "Perfil do navegador", onChange: () => save({ auth: { profile: M.profile.value } }) });
-    M.file = h("input", { class: "input sm", placeholder: "Caminho do cookies.txt", "aria-label": "Arquivo cookies.txt", onChange: () => save({ auth: { cookie_file: M.file.value } }) });
-    M.token = h("input", { class: "input sm", type: "password", autocomplete: "off", "aria-label": "Token de atualização", placeholder: "Cole o valor do cookie we2_refresh_token",
-      onChange: () => { if (M.token.value.trim()) { save({ auth: { refresh_token: M.token.value.trim() } }); M.token.value = ""; toast("Token salvo neste computador"); } } });
+    // Mexer em um campo já escolhe o método dele: ninguém precisa clicar no cartão antes.
+    const BROWSERS = { firefox: "Firefox", chrome: "Google Chrome", edge: "Microsoft Edge", brave: "Brave", chromium: "Chromium", opera: "Opera", vivaldi: "Vivaldi", safari: "Safari" };
+    M.browser = h("select", { class: "select sm", "aria-label": "Navegador", onChange: () => save({ auth: { method: "browser", browser: M.browser.value } }) },
+      Object.entries(BROWSERS).map(([value, text]) => h("option", { value, text })));
+    M.profile = h("input", { class: "input sm", placeholder: "Perfil do navegador (opcional)", "aria-label": "Perfil do navegador", onChange: () => save({ auth: { method: "browser", profile: M.profile.value } }) });
+    M.file = h("input", { class: "input sm", placeholder: "Caminho do arquivo de cookies (.txt ou .json)", "aria-label": "Arquivo de cookies", spellcheck: false,
+      onChange: () => { if (M.file.value.trim()) save({ auth: { method: "file", cookie_file: M.file.value } }); } });
+    M.pickFile = h("button", { class: "btn soft xs", type: "button", onClick: async () => {
+      try { const r = await api.post("/api/pick-cookie-file"); S.st.settings = r.settings; M.file.value = r.settings.auth.cookie_file; result = null; drawResult(); update(); }
+      catch (e) { toast(e.message, "err"); }
+    } }, icon("folder-open", "sm"), "Procurar arquivo");
+    const saveToken = async () => {
+      const value = M.token.value.trim();
+      if (!value) return;
+      M.token.value = "";
+      await save({ auth: { method: "token", refresh_token: value } });
+      toast("Token salvo neste computador");
+    };
+    M.token = h("input", { class: "input sm", type: "password", autocomplete: "off", "aria-label": "Token de atualização", placeholder: "Cole o valor do cookie we2_refresh_token", onChange: saveToken });
     M.rmToken = h("button", { class: "btn ghost xs", type: "button", onClick: () => save({ auth: { refresh_token: "" } }), text: "Remover token salvo" });
 
+    // Antes de testar, grava o que estiver digitado (o clique no botão pode chegar antes do "change" do campo).
+    async function flush() {
+      const a = settings().auth, patch = {};
+      if (M.token.value.trim()) { patch.method = "token"; patch.refresh_token = M.token.value.trim(); M.token.value = ""; }
+      else if (M.file.value.trim() && M.file.value.trim() !== a.cookie_file) { patch.method = "file"; patch.cookie_file = M.file.value; }
+      if (M.profile.value.trim() !== a.profile) patch.profile = M.profile.value;
+      if (M.browser.value !== a.browser) patch.browser = M.browser.value;
+      if (Object.keys(patch).length) await save({ auth: patch });
+    }
     const test = h("button", { class: "btn primary", type: "button", onClick: async () => {
       test.disabled = true; test.replaceChildren(icon("loader-circle", "sm spin"), "Testando…");
-      try { result = await api.post("/api/login/check"); } catch (e) { result = { ok: false, message: e.message }; }
+      try { await flush(); result = await api.post("/api/login/check"); } catch (e) { result = { ok: false, message: e.message }; }
       test.disabled = false; test.replaceChildren(icon("shield-check", "sm"), "Testar conexão"); drawResult();
     } }, icon("shield-check", "sm"), "Testar conexão");
     function drawResult() {
-      resultBox.replaceChildren(result ? h("div", { class: `banner ${result.ok ? "blue" : "red"}` }, icon(result.ok ? "circle-check" : "triangle-alert"), h("p", { text: result.message })) : "");
+      resultBox.replaceChildren(...(result ? [h("div", { class: `banner ${result.ok ? "blue" : "red"}` }, icon(result.ok ? "circle-check" : "triangle-alert"),
+        h("div", {}, h("p", { text: result.message }), result.detail ? h("p", { class: "detail", text: `Detalhe técnico: ${result.detail}` }) : null))] : []));
     }
 
     root.append(h("div", { class: "page narrow" },
@@ -642,23 +665,24 @@
         h("div", { class: "card-head" }, h("div", {}, h("h3", { text: "Como conectar" }), h("p", { class: "sub", text: "Use a sessão que você já tem no navegador." }))),
         h("ol", { class: "steps" },
           h("li", {}, h("span", { text: "Entre na sua conta em weverse.io no navegador (vale login com Google, Apple, e-mail…)." })),
-          h("li", {}, h("span", { text: "Escolha abaixo o mesmo navegador e deixe o método “Cookies do navegador” marcado." })),
+          h("li", {}, h("span", { text: "Escolha abaixo um método: Firefox lê direto do navegador; Chrome e Edge pedem o arquivo de cookies ou o token." })),
           h("li", {}, h("span", { text: "Clique em Testar conexão e volte para a aba Baixar.", })))),
       h("section", { class: "card" },
         h("div", { class: "card-head" }, h("div", {}, h("h3", { text: "Método de login" }), h("p", { class: "sub", text: "O conteúdo exclusivo para membros só baixa se a sua conta tiver acesso a ele." }))),
         h("div", { class: "methods", role: "radiogroup", "aria-label": "Método de login" },
-          methodCard("browser", "cookie", "Cookies do navegador", "Recomendado. Lê só os cookies do weverse.io. No Chrome e no Edge recentes isso pode falhar no Windows; nesse caso use o Firefox.", h("div", { class: "field" }, M.browser, M.profile)),
-          methodCard("file", "file-text", "Arquivo cookies.txt", "Exporte os cookies do weverse.io com uma extensão do navegador e indique o arquivo.", M.file),
-          methodCard("token", "key-round", "Token de atualização", "Avançado. No navegador: Ferramentas do desenvolvedor, Armazenamento, Cookies, weverse.io, valor de we2_refresh_token.", h("div", { class: "field" }, M.token, M.rmToken)),
+          methodCard("browser", "cookie", "Cookies do navegador", "Mais simples com o Firefox. O Chrome e o Edge no Windows bloqueiam a leitura dos cookies; para eles use o arquivo de cookies.", h("div", { class: "field" }, M.browser, M.profile)),
+          methodCard("file", "file-text", "Arquivo de cookies", "Funciona com qualquer navegador. Com weverse.io aberto e logado, exporte os cookies com uma extensão (“Get cookies.txt LOCALLY” ou “Cookie-Editor”) e indique o arquivo.", h("div", { class: "field" }, M.file, M.pickFile)),
+          methodCard("token", "key-round", "Token de atualização", "Em weverse.io, aperte F12, abra Aplicativo (Chrome/Edge) ou Armazenamento (Firefox), depois Cookies, weverse.io, e copie o valor de we2_refresh_token.", h("div", { class: "field" }, M.token, M.rmToken)),
           methodCard("none", "users", "Sem conta", "Só o que o Weverse libera sem login (quase nunca inclui VODs).")),
         h("div", { class: "row-gap", style: "margin-top:18px" }, test), resultBox)));
 
     function update() {
       const a = settings().auth;
-      for (const key of ["browser", "file", "token", "none"]) M[key].setAttribute("aria-checked", String(a.method === key));
+      for (const key of ["browser", "file", "token", "none"]) cards[key].setAttribute("aria-checked", String(a.method === key));
       setValue(M.browser, a.browser); setValue(M.profile, a.profile); setValue(M.file, a.cookie_file);
       M.token.placeholder = a.has_token ? "Token salvo. Cole outro para substituir" : "Cole o valor do cookie we2_refresh_token";
       M.rmToken.classList.toggle("hidden", !a.has_token);
+      M.pickFile.classList.toggle("hidden", !S.st.can_pick_file);
     }
     return { update };
   }

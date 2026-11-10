@@ -8,6 +8,7 @@ import sys
 import threading
 from pathlib import Path
 
+from .auth import clean_path, clean_token
 from .paths import DEFAULT_SUBTITLES_DIR, ROOT_FOLDER_NAME, default_videos_dir, sanitize_component
 
 QUALITIES = ("best", "1080", "720", "480", "360", "worst")
@@ -96,8 +97,8 @@ def normalize(raw: dict) -> dict:
         "method": _pick(str(auth.get("method", "")), AUTH_METHODS, "none"),
         "browser": _pick(str(auth.get("browser", "")), BROWSERS, "firefox"),
         "profile": str(auth.get("profile") or "").strip(),
-        "cookie_file": str(auth.get("cookie_file") or "").strip(),
-        "refresh_token": str(auth.get("refresh_token") or "").strip(),
+        "cookie_file": clean_path(auth.get("cookie_file")),
+        "refresh_token": clean_token(auth.get("refresh_token")),
     }
     return cfg
 

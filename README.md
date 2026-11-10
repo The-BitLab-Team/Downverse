@@ -91,13 +91,15 @@ Sem o `pywebview` (ou no Linux) o Downverse abre no navegador padrão. Para for�
 
 ## Entrar na conta Weverse
 
-O Weverse exige login para quase todos os VODs. A sua senha **nunca** passa pelo Downverse; ele usa a sessão que você já tem no navegador. Na aba **Conta Weverse**:
+O Weverse exige login para quase todos os VODs. A sua senha **nunca** passa pelo Downverse; ele usa a sessão que você já tem no navegador. Entre em `weverse.io` no navegador e, na aba **Conta Weverse**, escolha um método e clique em **Testar conexão** (o teste confirma a sessão com o próprio Weverse):
 
-1. Entre em `weverse.io` no seu navegador (vale Google, Apple, e-mail…).
-2. Escolha o mesmo navegador no Downverse e deixe **Cookies do navegador** marcado.
-3. Clique em **Testar conexão**.
+| Método | Quando usar |
+| --- | --- |
+| **Cookies do navegador** | Firefox. No Windows, o Chrome e o Edge bloqueiam a leitura dos cookies por outros programas. |
+| **Arquivo de cookies** | Qualquer navegador, inclusive Chrome e Edge. Com weverse.io aberto e logado, exporte os cookies com uma extensão ("Get cookies.txt LOCALLY" ou "Cookie-Editor") e indique o arquivo. Aceita `.txt` (Netscape) e `.json`. |
+| **Token de atualização** | Em weverse.io, aperte F12, abra Aplicativo (Chrome/Edge) ou Armazenamento (Firefox) → Cookies → weverse.io e copie o valor de `we2_refresh_token`. |
 
-Alternativas: **arquivo `cookies.txt`** exportado com uma extensão do navegador, ou **token de atualização** (valor do cookie `we2_refresh_token`). No Chrome e no Edge recentes, ler os cookies pode falhar no Windows; nesse caso use o Firefox ou o `cookies.txt`.
+O Downverse guarda a sessão renovada em uma cópia própria; o arquivo que você exportou não é alterado. Se a sessão expirar, entre de novo no Weverse e repita o passo.
 
 ## Pelo terminal
 

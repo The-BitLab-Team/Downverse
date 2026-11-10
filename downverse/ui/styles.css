@@ -270,3 +270,4 @@ h1,h2,h3,h4,p{margin:0}
 .chip.wrap{border-radius:14px;align-items:flex-start}.chip.wrap>span{white-space:normal}
 .job-meta{display:flex;gap:4px 12px;flex-wrap:wrap}
 .hidden{display:none!important}
+.banner .detail{margin-top:4px;font-size:12px;opacity:.75;word-break:break-word}

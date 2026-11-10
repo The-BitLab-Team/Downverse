@@ -8,6 +8,8 @@ Aqui a gente só:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -23,6 +25,7 @@ from .library import Library
 from .paths import (
     LiveMeta, file_base_name, live_folder, sanitize_component, unique_live_folder,
 )
+from .auth import TOKEN_COOKIES, AuthError, prepare_cookie_file
 from .settings import SettingsStore, config_dir
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -102,10 +105,26 @@ _ERROR_MAP: list[tuple[str, str]] = [
     ("downloadable vod is not available",
      "A live terminou, mas o VOD ainda não está disponível. Tente de novo mais tarde."),
     ("drm", "Conteúdo protegido por DRM. O Downverse não baixa vídeos protegidos."),
-    ("refresh token", "O token de acesso expirou. Entre no Weverse pelo navegador e conecte a conta de novo."),
+    ("not a valid refresh token",
+     "Esse valor não é um token de atualização válido. Copie o valor do cookie we2_refresh_token "
+     "(não o we2_access_token), inteiro e sem aspas."),
+    ("refresh token has expired",
+     "A sessão do Weverse expirou. Entre de novo em weverse.io pelo navegador e conecte a conta outra vez."),
+    ("there is no refresh token",
+     "A sessão expirou e os cookies não trazem o token de renovação. Entre de novo em weverse.io e reconecte."),
+    ("refresh token", "A sessão do Weverse expirou. Entre de novo em weverse.io pelo navegador e conecte a conta outra vez."),
     ("access token", "O login expirou. Entre no Weverse pelo navegador e conecte a conta de novo."),
-    ("could not find", "Não consegui ler os cookies do navegador escolhido. Feche o navegador ou escolha outro método na aba Conta."),
-    ("failed to decrypt", "Não consegui ler os cookies do navegador (criptografados). Use o Firefox, um arquivo cookies.txt ou o token na aba Conta."),
+    ("could not copy",
+     "O navegador está aberto e bloqueia a leitura dos cookies. Feche todas as janelas dele (confira na bandeja "
+     "do sistema) e teste de novo, ou use o Firefox, o arquivo cookies.txt ou o token."),
+    ("failed to decrypt",
+     "Este navegador protege os cookies e não deixa outros programas lerem (comum no Chrome e no Edge no Windows). "
+     "Use o Firefox, o arquivo cookies.txt ou o token."),
+    ("cookies database",
+     "Não achei esse navegador (ou esse perfil) neste computador. Escolha o navegador em que você entrou no Weverse."),
+    ("could not find", "Não consegui ler os cookies do navegador escolhido. Escolha outro navegador ou outro método."),
+    ("netscape", "O arquivo de cookies não está em um formato que eu consiga ler. Exporte de novo os cookies do weverse.io."),
+    ("unsupported browser", "Esse navegador não é suportado. Escolha outro ou use o arquivo cookies.txt."),
     ("http error 404", "Live não encontrada. O link pode estar errado ou o vídeo foi removido."),
     ("http error 429", "O Weverse limitou as requisições. Espere alguns minutos e tente de novo."),
     ("timed out", "A conexão demorou demais. Verifique sua internet e tente de novo."),
@@ -168,6 +187,9 @@ class Engine:
         self.library = library
         self.ffmpeg = find_ffmpeg()
         self.cache_dir = config_dir() / "cache"
+        self._session_lock = threading.Lock()
+        self._auth_fingerprint: str | None = None
+        self.is_busy: Callable[[], bool] | None = None  # há downloads/listagens rodando?
 
     # -- opções -----------------------------------------------------------------
     def _base_opts(self, logger: CaptureLogger) -> dict:
@@ -185,15 +207,55 @@ class Engine:
         }
         if self.ffmpeg:
             opts["ffmpeg_location"] = self.ffmpeg
-        auth = self.settings.get()["auth"]
-        if auth["method"] == "browser":
-            opts["cookiesfrombrowser"] = (auth["browser"], auth["profile"] or None, None, None)
-        elif auth["method"] == "file" and auth["cookie_file"]:
-            opts["cookiefile"] = auth["cookie_file"]
-        elif auth["method"] == "token" and auth["refresh_token"]:
-            opts["username"] = "oauth"
-            opts["password"] = auth["refresh_token"]
+        opts.update(self._auth_opts())
         return opts
+
+    def _auth_opts(self) -> dict:
+        auth = self.settings.get()["auth"]
+        self._sync_session(auth)
+        if auth["method"] == "browser":
+            return {"cookiesfrombrowser": (auth["browser"], auth["profile"] or None, None, None)}
+        if auth["method"] == "file" and auth["cookie_file"]:
+            try:
+                return {"cookiefile": prepare_cookie_file(auth["cookie_file"], self.cache_dir)}
+            except AuthError as exc:
+                raise DownverseError(str(exc)) from exc
+        if auth["method"] == "token" and auth["refresh_token"]:
+            return {"username": "oauth", "password": auth["refresh_token"]}
+        return {}
+
+    def _sync_session(self, auth: dict) -> None:
+        """O extrator guarda a sessão na classe (vale para o processo todo) e em arquivos de cache.
+        Quando o usuário troca de método, navegador, arquivo ou token, joga fora a sessão antiga
+        para ela não vazar nem atrapalhar a nova. A marca fica em disco para valer entre execuções."""
+        fingerprint = hashlib.sha256(json.dumps(auth, sort_keys=True).encode()).hexdigest()
+        marker = self.cache_dir / "sessao.id"
+        with self._session_lock:
+            if self._auth_fingerprint is None:
+                try:
+                    self._auth_fingerprint = marker.read_text(encoding="utf-8").strip()
+                except OSError:
+                    self._auth_fingerprint = ""
+            if self._auth_fingerprint == fingerprint:
+                return
+            self._auth_fingerprint = fingerprint
+            self.reset_session()
+            try:
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
+                marker.write_text(fingerprint, encoding="utf-8")
+            except OSError:
+                pass
+
+    def reset_session(self) -> None:
+        from yt_dlp.extractor.weverse import WeverseBaseIE
+
+        WeverseBaseIE._oauth_tokens.clear()
+        shutil.rmtree(self.cache_dir / "weverse", ignore_errors=True)          # tokens do método "token"
+        for name in ("cookies-weverse.txt", "cookies-weverse.origem"):         # cópia do cookies.txt
+            try:
+                (self.cache_dir / name).unlink()
+            except OSError:
+                pass
 
     def _download_opts(self, options: dict, logger: CaptureLogger) -> dict:
         opts = self._base_opts(logger)
@@ -222,31 +284,57 @@ class Engine:
 
     # -- login ------------------------------------------------------------------
     def check_login(self) -> dict:
-        """Confere se há uma sessão do Weverse utilizável com o método escolhido."""
+        """Testa de verdade o método escolhido: lê a sessão e confirma com o Weverse."""
         auth = self.settings.get()["auth"]
         method = auth["method"]
+
+        def result(ok: bool, message: str, detail: str = "") -> dict:
+            return {"ok": ok, "method": method, "message": message, "detail": detail}
+
         if method == "none":
-            return {"ok": False, "method": method, "message": "Nenhuma conta conectada."}
-        if method == "file" and not Path(auth["cookie_file"]).is_file():
-            return {"ok": False, "method": method, "message": "Arquivo de cookies não encontrado."}
-        if method == "token":
-            if not auth["refresh_token"]:
-                return {"ok": False, "method": method, "message": "Cole o token de atualização."}
-            return {"ok": True, "method": method, "message": "Token salvo. Ele será validado no primeiro download."}
+            return result(False, "Nenhum método escolhido. Escolha um dos métodos acima e teste de novo.")
+        if method == "file" and not auth["cookie_file"]:
+            return result(False, "Indique o arquivo de cookies (cookies.txt).")
+        if method == "token" and not auth["refresh_token"]:
+            return result(False, "Cole o token de atualização (valor do cookie we2_refresh_token).")
+
+        if not self._busy():
+            from yt_dlp.extractor.weverse import WeverseBaseIE
+
+            WeverseBaseIE._oauth_tokens.clear()  # relê a sessão do zero, em vez de confiar na memória
 
         logger = CaptureLogger()
+        ydl = None
         try:
             ydl = self._make_ydl(self._base_opts(logger))
+            if method != "token":
+                names = {c.name for c in ydl.cookiejar if "weverse.io" in (c.domain or "")}
+                if not names & set(TOKEN_COOKIES):
+                    where = "nesse navegador" if method == "browser" else "nesse arquivo"
+                    return result(False, f"Não achei uma sessão do Weverse {where}. Entre em weverse.io "
+                                         f"(confira se está logado) e teste de novo.")
+            extractor = ydl.get_info_extractor("Weverse")
+            extractor.initialize()  # valida o token no Weverse e renova se preciso
+            if extractor._is_logged_in:
+                return result(True, "Conectado ao Weverse. Pode baixar.")
+            return result(False, "O Weverse não aceitou essa sessão. Entre de novo em weverse.io e reconecte.")
         except DownverseError as exc:
-            return {"ok": False, "method": method, "message": str(exc)}
-        names = {c.name for c in ydl.cookiejar if "weverse.io" in (c.domain or "")}
-        ydl.close()
-        if "we2_access_token" in names or "we2_refresh_token" in names:
-            return {"ok": True, "method": method, "message": "Sessão do Weverse encontrada."}
-        return {
-            "ok": False, "method": method,
-            "message": "Não achei uma sessão do Weverse. Entre em weverse.io nesse navegador e tente de novo.",
-        }
+            return result(False, str(exc))
+        except Exception as exc:
+            detail = clean_message(exc) or type(exc).__name__
+            message = friendly_error(exc, logger.errors + logger.warnings)
+            if message == detail or "--username" in detail:  # dica de linha de comando do yt-dlp: só confunde
+                detail = ""
+            return result(False, message, detail[:300])
+        finally:
+            if ydl is not None:
+                try:
+                    ydl.close()
+                except Exception:
+                    pass
+
+    def _busy(self) -> bool:
+        return bool(self.is_busy and self.is_busy())
 
     # -- listagem do canal ------------------------------------------------------
     def list_channel(self, url: str, should_stop: Callable[[], bool]) -> tuple[dict, Iterator[dict]]:

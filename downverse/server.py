@@ -57,8 +57,10 @@ class AppContext:
         self.engine = Engine(self.settings, self.library)
         self.downloads = DownloadManager(self.settings, self.library, self.engine)
         self.analyses = AnalysisManager(self.settings, self.library, self.engine)
+        self.engine.is_busy = lambda: self.downloads._running > 0
         self.token = token or secrets.token_urlsafe(24)
         self.port = 0
+        self.pick_file = None              # idem, para escolher o cookies.txt
         self.pick_folder = None            # preenchido pela janela nativa, se houver
         self.opener = open_path            # trocável nos testes
         self.img_src_extra = ""            # só a demo local usa (miniaturas simuladas em http://)
@@ -91,6 +93,7 @@ class AppContext:
             "default_output_dir": str(default_videos_dir()),
             "ffmpeg": bool(self.engine.ffmpeg),
             "can_pick_folder": self.can_pick_folder,
+            "can_pick_file": self.pick_file is not None,
             "queue": self.downloads.snapshot(),
             "library": {
                 "count": len(items),
@@ -309,6 +312,15 @@ def make_handler(ctx: AppContext):
         @route("POST", "/api/login/check")
         def login_check(self, m, body, q):
             return ctx.engine.check_login()
+
+        @route("POST", "/api/pick-cookie-file")
+        def pick_cookie_file(self, m, body, q):
+            if not ctx.pick_file:
+                raise ApiError("Seletor de arquivo indisponível neste modo. Cole o caminho do arquivo.")
+            chosen = ctx.pick_file()
+            if chosen:
+                ctx.settings.update({"auth": {"method": "file", "cookie_file": str(chosen)}})
+            return {"settings": ctx.settings.public(), "output_dir": str(ctx.settings.weverse_root())}
 
         @route("POST", "/api/pick-folder")
         def pick_folder(self, m, body, q):
